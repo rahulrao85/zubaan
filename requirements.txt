@@ -1,0 +1,6 @@
+faster-whisper>=1.1
+# Lip sync runs in LatentSync's own environment (see lipsync.sh); rendering uses HyperFrames via npx; ffmpeg must be on PATH.
+# Cover image only:
+pillow
+fonttools
+brotli

@@ -1,0 +1,7 @@
+.env
+out/
+lipsync_test/
+post/_f*.png
+__pycache__/
+*.pyc
+post/SUBMIT.md
