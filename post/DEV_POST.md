@@ -20,7 +20,7 @@ Same frame, same moment. Top: the English original. Bottom: Zubaan's Hinglish li
 
 ![Before and after: English original on top, Hinglish lip sync below](REPLACE_UPLOADED_IMAGE_URL)
 
-**The finished Hinglish Short, as it goes out on the channel:**
+**The finished Hinglish Short (unlisted demo):**
 {% embed https://youtube.com/shorts/REPLACE_FULL %}
 
 ## Code
@@ -50,7 +50,7 @@ Five steps. Every one except the voice uses open software.
 
 **The bug that taught me something.** Whisper heard "GPT-6 Astra" as "Astra 6" and the model name "Jev" as "Gev". Gemma then translated the mistakes faithfully. Hand-written hints worked for that one video only, so I looked for a source of truth that every video already has: **its own on-screen text**. The composition has an overlay that says *"Try GPT-6 Astra without a subscription"*. `dub.py` now pulls every overlay card out of the composition and gives it to Gemma as the spelling authority. Both names came out right, and Gemma even added *"har mahine"* (every month) from a card, where the transcript had only said "the list keeps changing".
 
-**Timing.** Hinglish runs 10–15% longer than English. Each line starts where its English line started and can speed up by at most 15% before it runs into the next one. Beyond that, the voice starts to sound rushed. 5 of the 18 lines needed the full 15%.
+**Timing (version 2).** Hinglish runs 10–15% longer than English. My first render placed each line at its English start time, and it looked wrong: the face kept talking in the gaps where the dub had already finished. Now Whisper's word timestamps give the exact span where each English line was spoken, and each Hinglish line is stretched or squeezed (0.85–1.2×) to fill that span, so every line starts and ends within about 0.1 s of the original. In the 7 pauses that are left, the video switches back to the original frames, so the face is quiet when the voice is quiet.
 
 **The mistake that cost me 48 minutes.** My machine already had LatentSync installed from an earlier experiment, and I assumed it was version 1.6 (512 px). I ran it with the 1.6 config, and it took 48 minutes for 6 seconds of video while my 12 GB card spilled into system RAM. Then it produced a mouth that looked like crumpled foil. While I was downloading the "real" 1.5 weights, I compared fingerprints: **the installed file *was* 1.5**, byte for byte. With the correct 256 px config, the same 6 seconds took 3.3 minutes and looked right.
 
@@ -70,9 +70,18 @@ Being honest about the one closed piece: **the voice.** I kept the ElevenLabs cl
 
 **On consent:** the tool is built to dub *your own* face and voice. The voice comes from your own clone, and lip sync only runs on footage you supply. The output gets YouTube's "altered or synthetic content" label, as it should.
 
+## Known Limitations
+
+I watched the first full render and didn't like it, so here's what's still wrong, from worst to least bad:
+
+- **The body still speaks English.** Lip sync only redraws the mouth and jaw. Head nods, eyebrows and hand gestures keep the rhythm of the original English sentences. On the first render, the Hinglish lines were placed by start time only, so for several seconds the mouth was moving with no voice. The fix: Whisper's word timestamps give the exact span where each English line was spoken, each Hinglish line is stretched or squeezed (0.85–1.2×) to fill that span, and in the pauses the video switches back to the original, non-speaking face. It's much better, but a dubbed face is never as natural as a re-recorded one.
+- **The mouth is a little soft.** LatentSync 1.5 works at 256 px. The 512 px model (1.6) needs an 18 GB GPU, which is exactly what the DigitalOcean GPU Droplet was for.
+- **English names in a Hindi voice.** A Hinglish voice may read "Astra" as the Hindi word *astra* (weapon). Zubaan takes voice-only respellings (`--say "Astra=Ass-truh"`) while the captions keep the real spelling. I listened to three versions and kept the plain spelling: in a Hinglish sentence, that is how my audience would say it anyway.
+- **Where it works best:** Shorts where cards and screen recordings cover most of the face. For face-to-camera Shorts, my honest advice to creators is still to re-record, and to use Zubaan for the back catalogue they never would have.
+
 ## My First User
 
-Me, as a creator. The dubbed GAL-012 goes out on Grounded AI Lab this week, and the three other held English Shorts are next in the queue. That's four videos rescued from the archive without re-recording. Nobody has paid yet. The next test is whether a creator friend who records in English will pay ₹99 to have one of theirs done.
+Me, as a creator, and I'm being strict about it. After watching version 1, I decided **not** to publish the dubbed GAL-012 on the channel. For a face-to-camera Short, re-recording still looks better (see Known Limitations). Where Zubaan earns its place is my held English Shorts that are mostly cards and screen recordings, and that's where it goes next. Nobody has paid yet. The next test is whether a creator friend who records in English will pay ₹99 for one of theirs.
 
 ## Prize Categories
 

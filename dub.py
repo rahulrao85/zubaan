@@ -14,7 +14,9 @@ ENV_FILES = [HERE / ".env", HERE.parent / ".env"]
 DO_URL = "https://inference.do-ai.run/v1/chat/completions"
 DO_MODEL = "gemma-4-31B-it"
 TTS_MODEL = "eleven_v4"  # the voice is your own ElevenLabs clone: ELEVENLABS_VOICE_ID
-MAX_SPEEDUP = 1.15  # beyond this the voice sounds rushed; let the line spill into the next gap instead
+# Each Hinglish line is stretched or squeezed to fill the span where the English line was spoken, so the dub talks
+# when the face talks and stays quiet when the face is quiet. Outside this range the voice sounds slurred or rushed.
+MIN_SPEED, MAX_SPEED = 0.85, 1.2
 
 
 def env(name):
@@ -45,6 +47,23 @@ def transcribe(wav, out):
     data = [{"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()} for s in segs]
     out.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     return data
+
+
+def speech_spans(wav, segs, out):
+    """Where each English line is actually spoken: first word start to last word end (segment times are padded)."""
+    if out.exists():
+        return json.loads(out.read_text(encoding="utf-8"))
+    from faster_whisper import WhisperModel
+    found, _ = WhisperModel("small.en", device="cpu", compute_type="int8").transcribe(str(wav), language="en",
+                                                                                         word_timestamps=True)
+    words = [w for s in found for w in s.words]
+    spans = []
+    for seg in segs:
+        inside = [w for w in words if seg["start"] <= (w.start + w.end) / 2 < seg["end"]]
+        spans.append({"s": round(inside[0].start, 3), "e": round(inside[-1].end, 3)} if inside
+                     else {"s": seg["start"], "e": seg["end"]})
+    out.write_text(json.dumps(spans, indent=1), encoding="utf-8")
+    return spans
 
 
 PROMPT = """You dub a YouTube Short for an Indian AI channel from English into spoken Hinglish (Roman script, Mumbai conversational, the way a young Indian techie talks).
@@ -112,11 +131,17 @@ def words(al):
     return out
 
 
-def tts(text, mp3):
+def tts(text, mp3, say=None):
+    """say: {"Astra": "Ass-truh"} respells English names for the voice only (a Hindi-reading voice says "Astra"
+    like the Hindi word for weapon). The saved word timings are mapped back, so captions keep the real spelling."""
+    say = say or {}
+    spoken = text
+    for word, sound in say.items():
+        spoken = re.sub(rf"\b{re.escape(word)}\b", sound, spoken)
     txt, wj = mp3.with_suffix(".txt"), mp3.with_suffix(".words.json")
-    if mp3.exists() and wj.exists() and txt.exists() and txt.read_text(encoding="utf-8") == text:
+    if mp3.exists() and wj.exists() and txt.exists() and txt.read_text(encoding="utf-8") == spoken:
         return
-    body = json.dumps({"text": text, "model_id": TTS_MODEL}).encode()
+    body = json.dumps({"text": spoken, "model_id": TTS_MODEL}).encode()
     req = urllib.request.Request(f"https://api.elevenlabs.io/v1/text-to-speech/{env('ELEVENLABS_VOICE_ID')}/with-timestamps?output_format=mp3_44100_128",
                                  data=body, headers={"xi-api-key": env("ELEVENLABS_API_KEY"), "Content-Type": "application/json"})
     for attempt in range(3):
@@ -128,22 +153,54 @@ def tts(text, mp3):
                 raise
             time.sleep(5)
     mp3.write_bytes(base64.b64decode(r["audio_base64"]))
-    wj.write_text(json.dumps(words(r["alignment"]), ensure_ascii=False), encoding="utf-8")
-    txt.write_text(text, encoding="utf-8")
+    back = {sound: word for word, sound in say.items()}
+    ws = [{**w, "w": next((word + w["w"][len(sound):] for sound, word in back.items() if w["w"].startswith(sound)),
+                          w["w"])} for w in words(r["alignment"])]
+    wj.write_text(json.dumps(ws, ensure_ascii=False), encoding="utf-8")
+    txt.write_text(spoken, encoding="utf-8")
 
 
-def place(lines, vo_dir, total):
-    """Start each line at its English start; speed up (capped) when it would run into the next line."""
+def place(spans, vo_dir, total):
+    """Fit each Hinglish line into the span where its English line was spoken (speed clamped to MIN/MAX_SPEED).
+    A line that still doesn't fit may run into the pause after it, but never into the next line."""
     plan, cursor = [], 0.0
-    for i, ln in enumerate(lines):
-        mp3 = vo_dir / f"{i + 1:02d}.mp3"
-        d = dur(mp3)
-        start = max(ln["start"], cursor + 0.08)
-        nxt = lines[i + 1]["start"] if i + 1 < len(lines) else total
-        speed = min(MAX_SPEEDUP, max(1.0, d / max(nxt - start, 0.1)))
+    for i, sp in enumerate(spans):
+        d = dur(vo_dir / f"{i + 1:02d}.mp3")
+        start = max(sp["s"], cursor + 0.06)
+        speed = min(MAX_SPEED, max(MIN_SPEED, d / max(sp["e"] - start, 0.1)))
+        limit = (spans[i + 1]["s"] if i + 1 < len(spans) else total) - 0.06
+        if start + d / speed > limit:  # would collide with the next line: squeeze a little harder
+            speed = min(1.35, d / max(limit - start, 0.1))
         plan.append({"n": i + 1, "start": round(start, 3), "len": round(d / speed, 3), "speed": round(speed, 3)})
         cursor = start + d / speed
     return plan
+
+
+def silences(plan, spans, total, min_gap=0.4, pad=0.08):
+    """Stretches where both the dub and the original English are silent: there the original, non-speaking face is
+    shown instead of the lip-sync output. Where only the dub is silent the original face is still talking, so the
+    lip-sync frames (mouth at rest on silent audio) stay."""
+    def gaps(spoken):
+        edges = [0.0] + [x for a, b in spoken for x in (a, b)] + [total]
+        return [(edges[k], edges[k + 1]) for k in range(0, len(edges), 2) if edges[k + 1] > edges[k]]
+    dub = gaps([(p["start"], p["start"] + p["len"]) for p in plan])
+    eng = gaps([(sp["s"], sp["e"]) for sp in spans])
+    both = [(max(a, c), min(b, d)) for a, b in dub for c, d in eng if min(b, d) - max(a, c) > 0]
+    return [(round(a + pad, 3), round(b - pad, 3)) for a, b in both if b - a >= min_gap + 2 * pad]
+
+
+def chunk_cuts(gaps, plan, total, longest=16.0):
+    """Lip-sync chunk boundaries, each chunk at most `longest` seconds (RAM bound). Prefer the middle of a silent gap;
+    where speech runs on too long, fall back to the boundary between two lines."""
+    mids = sorted({round((a + b) / 2 * 25) / 25 for a, b in gaps if 0 < a and b < total}
+                  | {round((a["start"] + a["len"] + b["start"]) / 2 * 25) / 25 for a, b in zip(plan, plan[1:])})
+    cuts, last = [], 0.0
+    for k, m in enumerate(mids):
+        nxt = mids[k + 1] if k + 1 < len(mids) else total
+        if nxt - last > longest and m > last:
+            cuts.append(m)
+            last = m
+    return cuts
 
 
 def bed(short_dir):
@@ -179,6 +236,7 @@ def main():
     ap.add_argument("short_dir", type=Path)
     ap.add_argument("--out", type=Path)
     ap.add_argument("--style", type=Path, help="a Hinglish script whose tone the translation should copy")
+    ap.add_argument("--say", default="", help='voice-only respellings, e.g. "Astra=Ass-truh,Jev=Jehv"')
     a = ap.parse_args()
     out = a.out or Path(__file__).resolve().parent / "out" / a.short_dir.name
     (out / "vo").mkdir(parents=True, exist_ok=True)
@@ -189,11 +247,17 @@ def main():
     glossary = on_screen_text(a.short_dir / "index.html")
     print("on-screen glossary:", glossary)
     hi = translate(segs, style, glossary, out / "hi.json")
+    say = dict(kv.split("=", 1) for kv in a.say.split(",") if "=" in kv)
     for i, ln in enumerate(hi["lines"]):
-        tts(ln["hi"], out / "vo" / f"{i + 1:02d}.mp3")
+        tts(ln["hi"], out / "vo" / f"{i + 1:02d}.mp3", say)
     # The English voice track ends where the closing sting begins; the dub has to finish by then too.
-    plan = place(hi["lines"], out / "vo", dur(a.short_dir / "assets" / "voice.wav"))
+    voice_len = dur(a.short_dir / "assets" / "voice.wav")
+    spans = speech_spans(a.short_dir / "assets" / "voice.wav", segs, out / "en_spans.json")
+    plan = place(spans, out / "vo", voice_len)
+    gaps = silences(plan, spans, dur(a.short_dir / "assets" / "base.mp4"))
     (out / "plan.json").write_text(json.dumps(plan, indent=1), encoding="utf-8")
+    (out / "silences.json").write_text(json.dumps(gaps), encoding="utf-8")
+    (out / "cuts.txt").write_text(" ".join(str(c) for c in chunk_cuts(gaps, plan, voice_len)), encoding="utf-8")
     mix(plan, out / "vo", bed(a.short_dir), dur(render), out / "dub_vo.wav")
     # Voice alone, for the lip-sync model (music would confuse its audio encoder).
     mix(plan, out / "vo", [], dur(a.short_dir / "assets" / "base.mp4"), out / "voice_only.wav")
@@ -201,8 +265,9 @@ def main():
     final = out / f"{render.stem}_HINGLISH.mp4"
     run("ffmpeg", "-y", "-i", str(render), "-i", str(out / "dub_vo.wav"), "-map", "0:v", "-map", "1:a",
         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", str(final))
-    over = [p for p in plan if p["speed"] >= MAX_SPEEDUP]
-    print(f"{final}\n{len(plan)} lines, {len(over)} at max speed-up, voice ends {plan[-1]['start'] + plan[-1]['len']:.1f}s "
+    over = [p for p in plan if not MIN_SPEED <= p["speed"] <= MAX_SPEED]
+    print(f"{final}\n{len(plan)} lines, {len(over)} outside {MIN_SPEED}-{MAX_SPEED}x, {len(gaps)} silent gaps, "
+          f"lip-sync cuts: {(out / 'cuts.txt').read_text()}; voice ends {plan[-1]['start'] + plan[-1]['len']:.1f}s "
           f"of {dur(render):.1f}s; Gemma usage {hi.get('usage', {}).get('total_tokens')} tokens")
 
 

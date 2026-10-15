@@ -44,6 +44,19 @@ def caption_html(lines, end):
     return "".join(divs), "".join(tweens), len(caps)
 
 
+def splice_silences(original, synced, silences_json, out):
+    """Where the dub is silent, show the original frames: the lip-sync model keeps moving the mouth on silence,
+    and with the dub fitted to the English speech spans the original face is quiet in those same stretches."""
+    gaps = json.loads(Path(silences_json).read_text(encoding="utf-8")) if Path(silences_json).exists() else []
+    if not gaps:
+        shutil.copy(synced, out)
+        return
+    enable = "+".join(f"between(t,{a},{b})" for a, b in gaps)
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(synced), "-i", str(original), "-filter_complex",
+                    f"[1:v]fps=25[o];[0:v][o]overlay=enable='{enable}'[v]", "-map", "[v]", "-an",
+                    "-c:v", "libx264", "-crf", "14", "-preset", "medium", str(out)], check=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("short_dir", type=Path)
@@ -55,7 +68,7 @@ def main():
     if comp.exists():
         shutil.rmtree(comp)
     shutil.copytree(a.short_dir, comp, ignore=shutil.ignore_patterns("renders", "node_modules"))
-    shutil.copy(a.lipsynced, comp / "assets" / "base.mp4")
+    splice_silences(a.short_dir / "assets" / "base.mp4", a.lipsynced, dub_dir / "silences.json", comp / "assets" / "base.mp4")
     shutil.copy(dub_dir / "voice_only.wav", comp / "assets" / "voice.wav")
 
     html = (comp / "index.html").read_text(encoding="utf-8")
