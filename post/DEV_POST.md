@@ -12,16 +12,15 @@ What I'd charge: **₹99 per Short, or ₹1,499 a month for 20.** My cost per 70
 
 ## Demo
 
-<!-- Govu: paste the YouTube links after uploading -->
 **Side by side: English original on the left, Hinglish dub on the right (with the Hinglish audio):**
-{% embed https://youtu.be/REPLACE_SIDE_BY_SIDE %}
+{% embed https://youtu.be/Eh_l5wJd3Vs %}
 
 Same frame, same moment. Top: the English original. Bottom: Zubaan's Hinglish lip sync.
 
-![Before and after: English original on top, Hinglish lip sync below](REPLACE_UPLOADED_IMAGE_URL)
+![Before and after: English original on top, Hinglish lip sync below](https://raw.githubusercontent.com/rahulrao85/zubaan/main/post/before_after_frames.png)
 
 **The finished Hinglish Short (unlisted demo):**
-{% embed https://youtube.com/shorts/REPLACE_FULL %}
+{% embed https://youtube.com/shorts/BbB2-YPP6-Q %}
 
 ## Code
 
